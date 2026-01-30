@@ -13,6 +13,7 @@ permissions:
 jobs:
   code-quality:
     name: Code Quality
+    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
     runs-on: ubuntu-latest
     outputs:
       eslint: ${{ steps.eslint-result.outputs.result }}
@@ -31,7 +32,7 @@ jobs:
           if [ -z "$RESOLVED_OWNER" ]; then RESOLVED_OWNER="${{ env.GITHUB_EVAL_ORG }}"; fi
           RESOLVED_REPO="${{ env.GITHUB_REPO }}"
           if [ -z "$RESOLVED_REPO" ]; then RESOLVED_REPO="$(echo "${{ github.repository }}" | cut -d'/' -f2)"; fi
-          BRANCH_SHA="${{ github.event.pull_request.base.sha }}"
+          BRANCH_SHA="${{ github.event.pull_request.head.sha }}"
           RAW_URL="https://raw.githubusercontent.com/${RESOLVED_OWNER}/${RESOLVED_REPO}/${{ github.event.pull_request.head.ref }}/.github/workflows/pr-automation-v2.yml"
           echo "RESOLVED_TOKEN=$RESOLVED_TOKEN" >> $GITHUB_ENV
           echo "RESOLVED_OWNER=$RESOLVED_OWNER" >> $GITHUB_ENV
@@ -83,10 +84,12 @@ jobs:
           github-token: ${{ env.RESOLVED_TOKEN }}
           script: |
             const number = context.payload.pull_request.number;
+            const eslint = `${{ steps.eslint-result.outputs.result }}`;
+            const prettier = `${{ steps.prettier-result.outputs.result }}`;
             const body = [
               `代码质量报告 - 分支SHA: ${process.env.TASK1_BRANCH_SHA}`,
-              `ESLint 结果: ${{ steps.eslint-result.outputs.result }}`,
-              `Prettier 结果: ${{ steps.prettier-result.outputs.result }}`,
+              `ESLint 结果: ${eslint}`,
+              `Prettier 结果: ${prettier}`,
               `仓库: ${process.env.RESOLVED_OWNER}/${process.env.RESOLVED_REPO}`,
               `工作流RAW地址: ${process.env.WORKFLOW_RAW_URL}`
             ].join('\n');
@@ -100,6 +103,7 @@ jobs:
 
   testing-suite:
     name: Testing Suite
+    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
     runs-on: ubuntu-latest
     outputs:
       test: ${{ steps.test-result.outputs.result }}
@@ -119,7 +123,7 @@ jobs:
           if [ -z "$RESOLVED_OWNER" ]; then RESOLVED_OWNER="${{ env.GITHUB_EVAL_ORG }}"; fi
           RESOLVED_REPO="${{ env.GITHUB_REPO }}"
           if [ -z "$RESOLVED_REPO" ]; then RESOLVED_REPO="$(echo "${{ github.repository }}" | cut -d'/' -f2)"; fi
-          BRANCH_SHA="${{ github.event.pull_request.base.sha }}"
+          BRANCH_SHA="${{ github.event.pull_request.head.sha }}"
           RAW_URL="https://raw.githubusercontent.com/${RESOLVED_OWNER}/${RESOLVED_REPO}/${{ github.event.pull_request.head.ref }}/.github/workflows/pr-automation-v2.yml"
           echo "RESOLVED_TOKEN=$RESOLVED_TOKEN" >> $GITHUB_ENV
           echo "RESOLVED_OWNER=$RESOLVED_OWNER" >> $GITHUB_ENV
@@ -197,6 +201,7 @@ jobs:
 
   security-scan:
     name: Security Scan
+    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
     runs-on: ubuntu-latest
     outputs:
       vulnerabilities: ${{ steps.security-result.outputs.vulnerabilities }}
@@ -215,7 +220,7 @@ jobs:
           if [ -z "$RESOLVED_OWNER" ]; then RESOLVED_OWNER="${{ env.GITHUB_EVAL_ORG }}"; fi
           RESOLVED_REPO="${{ env.GITHUB_REPO }}"
           if [ -z "$RESOLVED_REPO" ]; then RESOLVED_REPO="$(echo "${{ github.repository }}" | cut -d'/' -f2)"; fi
-          BRANCH_SHA="${{ github.event.pull_request.base.sha }}"
+          BRANCH_SHA="${{ github.event.pull_request.head.sha }}"
           RAW_URL="https://raw.githubusercontent.com/${RESOLVED_OWNER}/${RESOLVED_REPO}/${{ github.event.pull_request.head.ref }}/.github/workflows/pr-automation-v2.yml"
           echo "RESOLVED_TOKEN=$RESOLVED_TOKEN" >> $GITHUB_ENV
           echo "RESOLVED_OWNER=$RESOLVED_OWNER" >> $GITHUB_ENV
@@ -253,11 +258,20 @@ jobs:
           args: detect --no-git -v
         continue-on-error: true
 
+      - name: Determine gitleaks status
+        id: gitleaks-status
+        run: |
+          if [ -f gitleaks-report.json ]; then
+            echo "status=found" >> $GITHUB_OUTPUT
+          else
+            echo "status=none" >> $GITHUB_OUTPUT
+          fi
+
       - name: Capture security results
         id: security-result
         run: |
-          echo "vulnerabilities=高危:$${{ steps.npm-audit.outputs.high }} 中危:$${{ steps.npm-audit.outputs.moderate }} 低危:$${{ steps.npm-audit.outputs.low }}" >> $GITHUB_OUTPUT
-          STATUS="${{ steps.gitleaks.outcome }}"
+          echo "vulnerabilities=高危:${{ steps.npm-audit.outputs.high }} 中危:${{ steps.npm-audit.outputs.moderate }} 低危:${{ steps.npm-audit.outputs.low }}" >> $GITHUB_OUTPUT
+          STATUS="${{ steps.gitleaks-status.outputs.status }}"
           echo "gitleaks_status=$STATUS" >> $GITHUB_OUTPUT
 
       - name: Post PR comment (Security Scan)
@@ -285,10 +299,12 @@ jobs:
 
   build-validation:
     name: Build Validation
+    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
     runs-on: ubuntu-latest
     outputs:
       build_status: ${{ steps.build-result.outputs.build_status }}
       endpoint_status: ${{ steps.build-result.outputs.endpoint_status }}
+      artifact_size: ${{ steps.dist-info.outputs.artifact_size }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -303,7 +319,7 @@ jobs:
           if [ -z "$RESOLVED_OWNER" ]; then RESOLVED_OWNER="${{ env.GITHUB_EVAL_ORG }}"; fi
           RESOLVED_REPO="${{ env.GITHUB_REPO }}"
           if [ -z "$RESOLVED_REPO" ]; then RESOLVED_REPO="$(echo "${{ github.repository }}" | cut -d'/' -f2)"; fi
-          BRANCH_SHA="${{ github.event.pull_request.base.sha }}"
+          BRANCH_SHA="${{ github.event.pull_request.head.sha }}"
           RAW_URL="https://raw.githubusercontent.com/${RESOLVED_OWNER}/${RESOLVED_REPO}/${{ github.event.pull_request.head.ref }}/.github/workflows/pr-automation-v2.yml"
           echo "RESOLVED_TOKEN=$RESOLVED_TOKEN" >> $GITHUB_ENV
           echo "RESOLVED_OWNER=$RESOLVED_OWNER" >> $GITHUB_ENV
@@ -330,6 +346,7 @@ jobs:
         continue-on-error: true
 
       - name: Prepare dist artifact (placeholder if missing)
+        id: dist-info
         run: |
           mkdir -p dist
           cp -f build.log dist/build.log || true
@@ -365,15 +382,17 @@ jobs:
         uses: actions/github-script@v7
         with:
           github-token: ${{ env.RESOLVED_TOKEN }}
+        
           script: |
             const number = context.payload.pull_request.number;
             const buildStatus = `${{ steps.build-result.outputs.build_status }}`;
             const endpointStatus = `${{ steps.build-result.outputs.endpoint_status }}`;
+            const artifactSize = `${{ steps.dist-info.outputs.artifact_size }}`;
             const body = [
               `构建验证 - 分支SHA: ${process.env.TASK1_BRANCH_SHA}`,
               `端点可达性 状态码: ${endpointStatus}`,
               `部署预览 工件: deployment-preview-${number}`,
-              `构建产物大小: (见工件)`,
+              `构建产物大小: ${artifactSize}`,
               `仓库: ${process.env.RESOLVED_OWNER}/${process.env.RESOLVED_REPO}`,
               `工作流RAW地址: ${process.env.WORKFLOW_RAW_URL}`
             ].join('\n');
@@ -384,14 +403,3 @@ jobs:
               body
             });
         continue-on-error: true
-
-# Only run jobs when PR is from feat/* to main
-# Note: GitHub workflow-level filters for head are limited; enforce via each job's if condition
-  code-quality:
-    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
-  testing-suite:
-    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
-  security-scan:
-    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
-  build-validation:
-    if: startsWith(github.head_ref, 'feat/') && github.base_ref == 'main'
