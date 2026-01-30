@@ -4,139 +4,173 @@ on:
     types: [opened, synchronize, reopened]
     branches: [main]
 
+env:
+  NODE_VERSION: 'lts/hydrogen'
+
 jobs:
   code-quality:
     runs-on: ubuntu-latest
     if: startsWith(github.head_ref, 'feat/')
     outputs:
-      eslint-result: ${{ steps.eslint.outcome }}
-      prettier-result: ${{ steps.prettier.outcome }}
+      eslint-result: ${{ steps.eslint.outputs.result }}
+      prettier-result: ${{ steps.prettier.outputs.result }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/hydrogen'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: npm ci
       - name: ESLint
         id: eslint
-        run: npm run lint
         continue-on-error: true
+        run: |
+          npm run lint > eslint.log 2>&1 || true
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat eslint.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          cat eslint.log
       - name: Prettier
         id: prettier
-        run: npx prettier --check .
         continue-on-error: true
-      - name: Comment
-        uses: actions/github-script@v7
-        env:
-          TASK_1_SHA: 'f11335eb7e8db55a2de4d1625c10c516fc0c968a'
-          ESLINT_OUT: ${{ steps.eslint.outcome }}
-          PRETTIER_OUT: ${{ steps.prettier.outcome }}
+        run: |
+          npx prettier --check . > prettier.log 2>&1 || true
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat prettier.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          cat prettier.log
+      - uses: actions/github-script@v7
         with:
           script: |
-             github.rest.issues.createComment({
-               issue_number: context.issue.number,
-               owner: context.repo.owner,
-               repo: context.repo.repo,
-               body: `### 代码质量报告\n- **ESLint**: ${process.env.ESLINT_OUT}\n- **Prettier**: ${process.env.PRETTIER_OUT}\n- **Branch SHA**: ${process.env.TASK_1_SHA}`
-             })
+            const sha = context.payload.pull_request.head.sha;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 代码质量报告 (Code Quality Report)\n- **ESLint**: \n\`\`\`\n${{ steps.eslint.outputs.result }}\n\`\`\`\n- **Prettier**: \n\`\`\`\n${{ steps.prettier.outputs.result }}\n\`\`\`\n- **Branch SHA**: ${sha}`
+            })
 
   testing-suite:
     runs-on: ubuntu-latest
     if: startsWith(github.head_ref, 'feat/')
     outputs:
-      test-result: ${{ steps.test.outcome }}
+      test-result: ${{ steps.test.outputs.result }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'lts/hydrogen'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: npm ci
       - name: Test
         id: test
-        run: npm test -- --coverage
         continue-on-error: true
+        run: |
+          npm test -- --coverage > test.log 2>&1 || true
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat test.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          cat test.log
       - uses: actions/upload-artifact@v4
         with:
           name: test-coverage-report-${{ github.event.pull_request.number }}
-          path: ./coverage
+          path: coverage
           retention-days: 14
-      - name: Comment
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
             github.rest.issues.createComment({
-               issue_number: context.issue.number,
-               owner: context.repo.owner,
-               repo: context.repo.repo,
-               body: `### 测试覆盖率报告\n- **行覆盖率**: N/A\n- **分支覆盖率**: N/A\n- **测试用例**: Executed`
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 测试覆盖率报告 (Test Coverage Report)\n- **Line Coverage** (行覆盖率): (See artifact)\n- **Branch Coverage** (分支覆盖率): (See artifact)\n- **Test Result**: \n\`\`\`\n${{ steps.test.outputs.result }}\n\`\`\``
             })
 
   security-scan:
     runs-on: ubuntu-latest
     if: startsWith(github.head_ref, 'feat/')
     outputs:
-      security-result: ${{ steps.audit.outcome }}
+      security-result: ${{ steps.audit.outputs.result }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'lts/hydrogen'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: npm ci
-      - name: Audit
+      - name: NPM Audit
         id: audit
-        run: npm audit --json
         continue-on-error: true
+        run: |
+          npm audit --json > audit.json || true
+          HIGH=$(jq '.metadata.vulnerabilities.high // 0' audit.json)
+          MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' audit.json)
+          LOW=$(jq '.metadata.vulnerabilities.low // 0' audit.json)
+          RESULT="High: $HIGH, Moderate: $MODERATE, Low: $LOW"
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+          echo "$RESULT"
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@v2
         continue-on-error: true
-      - name: Comment
-        uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/github-script@v7
         with:
           script: |
-             github.rest.issues.createComment({
-               issue_number: context.issue.number,
-               owner: context.repo.owner,
-               repo: context.repo.repo,
-               body: `### 安全扫描报告\n- **依赖项**: Checked\n- **漏洞**: Checked\n- **机密信息**: Checked`
-             })
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 安全扫描报告 (Security Scan Report)\n- **Dependencies** (依赖项): ${{ steps.audit.outputs.result }}\n- **Vulnerabilities** (漏洞): Checked\n- **Secrets** (机密信息): Checked (Gitleaks)`
+            })
 
   build-validation:
     runs-on: ubuntu-latest
     if: startsWith(github.head_ref, 'feat/')
     outputs:
-      build-result: ${{ steps.build.outcome }}
+      build-result: ${{ steps.build.outputs.result }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'lts/hydrogen'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: npm ci
       - name: Build
         id: build
-        run: npm run build
         continue-on-error: true
-      - name: Health Check
         run: |
-           # Mock health check
-           echo "Health Check Passed"
+          npm run build > build.log 2>&1 || true
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat build.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          cat build.log
+      - name: Verify
+        id: verify
         continue-on-error: true
+        run: |
+          if grep -q '"start":' package.json; then
+             nohup npm start &
+             sleep 5
+             STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://localhost:3000/health || echo "Unreachable")
+             echo "endpoint=$STATUS" >> $GITHUB_OUTPUT
+             echo "Endpoint Status: $STATUS"
+          else
+             echo "endpoint=NoStartScript" >> $GITHUB_OUTPUT
+             echo "No start script found"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: deployment-preview-${{ github.event.pull_request.number }}
-          path: ./dist
+          path: dist
           retention-days: 14
-      - name: Comment
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
             github.rest.issues.createComment({
-               issue_number: context.issue.number,
-               owner: context.repo.owner,
-               repo: context.repo.repo,
-               body: `### 构建验证\n- **端点可达性**: Checked\n- **部署预览**: Ready\n- **Size**: Unknown`
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 构建验证 (Build Validation)\n- **Endpoint Reachability** (端点可达性): ${{ steps.verify.outputs.endpoint }}\n- **Deployment Preview** (部署预览): Created`
             })
